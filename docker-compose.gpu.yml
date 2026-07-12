@@ -1,0 +1,37 @@
+# GPU docker-compose — Azure NC16as_T4_v3
+# Usage: docker compose -f docker-compose.gpu.yml up --build -d
+#
+# Prerequisites (one-time on the VM): run setup-gpu-vm.sh first
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.gpu
+      args:
+        MODEL_SIZE: "7b"
+    container_name: explainx-backend
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+      - MAX_UPLOAD_MB=20
+      - SESSION_TTL_MINUTES=120
+      - APP_PASSWORD=explainx2024
+    expose:
+      - "5000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  frontend:
+    build: ./frontend
+    container_name: explainx-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    container_name: explainx-backend
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production
+      - MAX_UPLOAD_MB=20
+      - SESSION_TTL_MINUTES=120
+      - APP_PASSWORD=explainx2024
+    expose:
+      - "5000"
+
+  frontend:
+    build: ./frontend
+    container_name: explainx-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

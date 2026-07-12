@@ -1,0 +1,40 @@
+# GPU Dockerfile — Azure NC16as_T4_v3 (NVIDIA T4, CUDA 12.1)
+# Uses nvidia/cuda base image which works on Ubuntu 22.04 and 24.04 hosts.
+# Build with: docker compose -f docker-compose.gpu.yml build --build-arg MODEL_SIZE=7b
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+# Install Python 3.11
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3.11-dev python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+WORKDIR /app
+
+ARG MODEL_SIZE=7b
+ENV MODEL_SIZE=${MODEL_SIZE}
+
+COPY requirements.txt .
+
+# Install everything except llama-cpp-python
+RUN pip install --no-cache-dir flask==3.0.3 flask-cors==4.0.1 pdfplumber==0.11.4 \
+    scikit-learn==1.5.1 nltk==3.9.1 gunicorn==22.0.0 \
+    fastembed==0.3.6 rank-bm25==0.2.2 huggingface_hub pyspellchecker==0.8.1
+
+# Install CUDA-enabled llama-cpp-python wheel (prebuilt for cu121 — no compiler needed)
+RUN pip install --no-cache-dir llama-cpp-python==0.2.90 \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+
+COPY model_setup.py .
+RUN python3 model_setup.py
+
+COPY . .
+
+EXPOSE 5000
+
+# Timeout 60s — GPU inference is ~1-3s/answer, no need for 300s
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--timeout", "60", "--graceful-timeout", "60", "app:app"]
