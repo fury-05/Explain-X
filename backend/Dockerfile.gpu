@@ -4,9 +4,9 @@
 
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-# Install Python 3.11
+# Install Python 3.11 + libgomp1 (required runtime dep for llama-cpp-python)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-dev python3-pip \
+    python3.11 python3.11-dev python3-pip libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.11 the default python3
