@@ -36,15 +36,18 @@ MODEL_MAP = {
     # GPU builds (Azure NC16as_T4_v3 — use with gpu Dockerfile)
     "7b": {
         "repo_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-        "filename": "qwen2.5-7b-instruct-q4_k_m.gguf",
+        # Model is split into 2 parts — llama.cpp loads from part 1 automatically
+        "filename": "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        "extra_files": ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"],
         "n_ctx": 8192,
         "n_threads": 4,
-        "n_gpu_layers": -1,   # -1 = all layers on GPU (T4 has 16GB VRAM, 7B Q4 fits)
+        "n_gpu_layers": -1,
         "token_budget": 6000,
     },
     "7b-cpu": {
         "repo_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-        "filename": "qwen2.5-7b-instruct-q4_k_m.gguf",
+        "filename": "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        "extra_files": ["qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"],
         "n_ctx": 4096,
         "n_threads": 12,
         "n_gpu_layers": 0,
@@ -62,6 +65,14 @@ hf_hub_download(
     local_dir="/app/models",
     local_dir_use_symlinks=False,
 )
+for extra in cfg.get("extra_files", []):
+    print(f"Downloading extra part: {extra} ...")
+    hf_hub_download(
+        repo_id=cfg["repo_id"],
+        filename=extra,
+        local_dir="/app/models",
+        local_dir_use_symlinks=False,
+    )
 
 # Write config so engine.py knows which file to load at runtime
 with open("/app/models/model_config.txt", "w") as f:
