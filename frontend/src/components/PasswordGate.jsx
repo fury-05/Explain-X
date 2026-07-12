@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { verifyPassword } from '../api.js'
 
+const STUDENTS = ['Sahil', 'Yahya', 'Abdan', 'Sarim']
+const SCHOOL   = 'Good Samaritan School'
+
 export default function PasswordGate({ onUnlock }) {
   const [pw, setPw] = useState('')
   const [error, setError] = useState('')
@@ -33,15 +36,15 @@ export default function PasswordGate({ onUnlock }) {
       <div className="orb orb-2" />
       <div className="orb orb-3" />
 
-      {/* Card */}
-      <div className="relative z-10 w-full max-w-sm mx-4 scale-in">
-        <div className="glass-deep p-10 flex flex-col items-center gap-6">
+      {/* Card — wider to fit school + students */}
+      <div className="relative z-10 w-full mx-4 scale-in" style={{ maxWidth: '420px' }}>
+        <div className="glass-deep flex flex-col items-center gap-5" style={{ padding: '36px 40px' }}>
 
-          {/* Logo mark */}
+          {/* Logo */}
           <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
               style={{ background: 'linear-gradient(135deg, rgba(30,111,85,0.6) 0%, rgba(30,111,85,0.3) 100%)', border: '1px solid rgba(30,111,85,0.4)' }}>
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
                 <path d="M6 8h12a6 6 0 0 1 0 12H6V8z" stroke="#25a07a" strokeWidth="2" fill="none" />
                 <path d="M6 14h10" stroke="#25a07a" strokeWidth="2" strokeLinecap="round" />
                 <circle cx="24" cy="24" r="5" stroke="rgba(185,134,46,0.8)" strokeWidth="1.5" fill="none" />
@@ -58,10 +61,27 @@ export default function PasswordGate({ onUnlock }) {
             </div>
           </div>
 
+          {/* School + students badge */}
+          <div className="w-full rounded-xl px-4 py-3 text-center"
+            style={{ background: 'rgba(30,111,85,0.10)', border: '1px solid rgba(30,111,85,0.20)' }}>
+            <p className="text-xs font-body font-semibold uppercase tracking-widest mb-2"
+              style={{ color: 'rgba(30,111,85,0.85)' }}>
+              {SCHOOL}
+            </p>
+            <div className="flex justify-center gap-3 flex-wrap">
+              {STUDENTS.map((name, i) => (
+                <span key={i} className="text-xs font-body px-3 py-1 rounded-full"
+                  style={{ background: 'rgba(185,134,46,0.12)', border: '1px solid rgba(185,134,46,0.30)', color: 'rgba(185,134,46,0.90)' }}>
+                  {name}
+                </span>
+              ))}
+            </div>
+          </div>
+
           {/* Divider */}
           <div className="w-full h-px" style={{ background: 'rgba(255,255,255,0.08)' }} />
 
-          {/* Lock icon + text */}
+          {/* Lock + label */}
           <div className="flex flex-col items-center gap-1">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ color: 'var(--muted)' }}>
               <rect x="3" y="8" width="12" height="9" rx="2" stroke="currentColor" strokeWidth="1.5" />
@@ -74,11 +94,7 @@ export default function PasswordGate({ onUnlock }) {
 
           {/* Form */}
           <form onSubmit={submit} className="w-full flex flex-col gap-3">
-            <div
-              style={{
-                animation: shake ? 'shake 0.5s cubic-bezier(0.36,0.07,0.19,0.97) both' : 'none',
-              }}
-            >
+            <div style={{ animation: shake ? 'shake 0.5s cubic-bezier(0.36,0.07,0.19,0.97) both' : 'none' }}>
               <input
                 type="password"
                 className="glass-input w-full px-5 py-3 text-sm font-body"
@@ -88,13 +104,11 @@ export default function PasswordGate({ onUnlock }) {
                 autoFocus
               />
             </div>
-
             {error && (
               <p className="text-xs text-center fade-in" style={{ color: 'rgba(178,75,65,0.9)' }}>
                 {error}
               </p>
             )}
-
             <button
               type="submit"
               disabled={!pw.trim() || loading}
