@@ -13,9 +13,10 @@ ENV MODEL_SIZE=${MODEL_SIZE}
 COPY requirements.txt .
 
 # Install everything except llama-cpp-python first
-RUN pip install --no-cache-dir flask==3.0.3 flask-cors==4.0.1 pdfplumber==0.11.4 \
-    scikit-learn==1.5.1 nltk==3.9.1 gunicorn==22.0.0 \
-    fastembed==0.3.6 rank-bm25==0.2.2 huggingface_hub pyspellchecker==0.8.1
+RUN pip install --no-cache-dir flask==3.0.3 flask-cors==4.0.1 flask-limiter==3.7.0 \
+    pdfplumber==0.11.4 scikit-learn==1.5.1 nltk==3.9.1 gunicorn==22.0.0 \
+    fastembed==0.3.6 rank-bm25==0.2.2 huggingface_hub pyspellchecker==0.8.1 \
+    PyJWT==2.8.0
 
 # Install llama-cpp-python (build from source for glibc; libgomp1 stays as runtime dep)
 RUN apt-get update && apt-get install -y --no-install-recommends \

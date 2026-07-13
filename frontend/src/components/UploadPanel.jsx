@@ -39,7 +39,7 @@ export default function UploadPanel({ onChapterLoaded }) {
       const res = await uploadChapter(file)
       setChapterInfo(res.data)
       setState('loaded')
-      onChapterLoaded(res.data.session_id)
+      onChapterLoaded(res.data)
     } catch (err) {
       setErrorMsg(err?.response?.data?.error || 'Upload failed. Please try again.')
       setState('error')
@@ -54,6 +54,7 @@ export default function UploadPanel({ onChapterLoaded }) {
   const reset = () => {
     setState('empty'); setChapterInfo(null); setErrorMsg(''); onChapterLoaded(null)
   }
+
 
   return (
     <div className="glass p-4">
@@ -132,8 +133,23 @@ export default function UploadPanel({ onChapterLoaded }) {
             </div>
           </div>
           <ChapterOutline keywords={chapterInfo.top_keywords} />
-          <button className="mt-4 text-xs font-body underline" style={{ color: 'rgba(255,255,255,0.25)' }} onClick={reset}>
-            Upload a different chapter
+          <button
+            className="mt-4 w-full flex items-center justify-center gap-2 font-body text-xs font-medium rounded-xl transition-all"
+            style={{
+              padding: '8px 14px',
+              background: 'rgba(178,75,65,0.10)',
+              border: '1px solid rgba(178,75,65,0.30)',
+              color: 'rgba(220,100,90,0.85)',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(178,75,65,0.20)'; e.currentTarget.style.borderColor = 'rgba(178,75,65,0.50)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(178,75,65,0.10)'; e.currentTarget.style.borderColor = 'rgba(178,75,65,0.30)' }}
+            onClick={reset}
+          >
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+              <path d="M2 2l9 9M11 2L2 11" stroke="rgba(220,100,90,0.85)" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            Clear &amp; upload new chapter
           </button>
         </div>
       )}

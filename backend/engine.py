@@ -15,8 +15,10 @@ Architecture (per docs/05_FIX_LOCAL_LLM_COMPREHENSION.md):
   isn't in the provided text — no hallucination, no guessing.
 """
 
+import hashlib
 import io
 import re
+import threading
 
 import nltk
 import numpy as np
@@ -62,26 +64,30 @@ RETRIEVAL_TOP_K = 18
 # ── Singletons — loaded once at module import, reused across all requests ──────
 _EMBED_MODEL_INST: TextEmbedding | None = None
 _LLM: Llama | None = None
+_EMBED_LOCK = threading.Lock()
+_LLM_LOCK   = threading.Lock()
 
 
 def _embed_model() -> TextEmbedding:
     global _EMBED_MODEL_INST
-    if _EMBED_MODEL_INST is None:
-        _EMBED_MODEL_INST = TextEmbedding(model_name=EMBED_MODEL)
-    return _EMBED_MODEL_INST
+    with _EMBED_LOCK:
+        if _EMBED_MODEL_INST is None:
+            _EMBED_MODEL_INST = TextEmbedding(model_name=EMBED_MODEL)
+        return _EMBED_MODEL_INST
 
 
 def _llm() -> Llama:
     global _LLM
-    if _LLM is None:
-        _LLM = Llama(
-            model_path=LLM_PATH,
-            n_ctx=_LLM_N_CTX,
-            n_threads=_LLM_N_THREADS,
-            n_gpu_layers=_LLM_N_GPU_LAYERS,
-            verbose=False,
-        )
-    return _LLM
+    with _LLM_LOCK:
+        if _LLM is None:
+            _LLM = Llama(
+                model_path=LLM_PATH,
+                n_ctx=_LLM_N_CTX,
+                n_threads=_LLM_N_THREADS,
+                n_gpu_layers=_LLM_N_GPU_LAYERS,
+                verbose=False,
+            )
+        return _LLM
 
 
 def _embed(texts: list) -> np.ndarray:
@@ -164,7 +170,14 @@ def fits_whole_document(chunks: list) -> bool:
 
 # ── Prompt builders ────────────────────────────────────────────────────────────
 
-def build_prompt(context: str, question: str) -> str:
+LENGTH_INSTRUCTIONS = {
+    "short":    "Reply in 1–2 sentences only.",
+    "normal":   "Keep your answer short and direct.",
+    "detailed": "Give a thorough, well-structured answer with as much detail as the text supports.",
+}
+
+def build_prompt(context: str, question: str, length: str = "normal") -> str:
+    length_instr = LENGTH_INSTRUCTIONS.get(length, LENGTH_INSTRUCTIONS["normal"])
     return (
         "You are a helpful assistant. Answer the question using ONLY the text excerpts provided below. "
         "Do not use any outside knowledge. "
@@ -174,9 +187,72 @@ def build_prompt(context: str, question: str) -> str:
         "Instructions: Read every excerpt carefully before answering. "
         "For questions about organizations or companies, look for capitalized names and brand names in the text. "
         "For counting questions, count every distinct name you find. "
-        "Keep your answer short and direct. "
+        f"{length_instr} "
         "Answer:"
     )
+
+
+def build_eli12_prompt(context: str, question: str) -> str:
+    return (
+        "You are explaining to a 12-year-old student. Use very simple words and short sentences. "
+        "Answer the question using ONLY the text excerpts below. No outside knowledge. "
+        "If the answer is not in the excerpts, respond with exactly: NOT_FOUND\n\n"
+        f"Document excerpts:\n{context}\n\n"
+        f"Question: {question}\n\n"
+        "Simple explanation:"
+    )
+
+
+def build_followup_prompt(answer: str) -> str:
+    return (
+        "A student just received this answer:\n"
+        f'"{answer}"\n\n'
+        "Suggest exactly 2 natural follow-up questions a student might want to ask next. "
+        "Each question must be short (under 12 words) and relevant to the answer. "
+        "Format: one question per line, no numbering, no extra text."
+    )
+
+
+def build_flashcard_prompt(context: str) -> str:
+    return (
+        "You are making study flashcards. Using ONLY the text excerpts below, "
+        "extract exactly 8 important term-definition pairs.\n\n"
+        "Format each card EXACTLY like this (no extra text):\n"
+        "TERM: <term>\n"
+        "DEF: <one sentence definition>\n\n"
+        f"Document excerpts:\n{context}\n\n"
+        "8 flashcards:"
+    )
+
+
+def build_quiz_prompt(context: str) -> str:
+    return (
+        "You are a teacher creating a quiz. Using ONLY the text excerpts below, "
+        "write exactly 5 multiple-choice questions that test understanding of the key ideas.\n\n"
+        "Format each question EXACTLY like this (no extra text before or after):\n"
+        "Q: <question text>\n"
+        "A) <option>\n"
+        "B) <option>\n"
+        "C) <option>\n"
+        "D) <option>\n"
+        "ANSWER: <letter>\n"
+        "EXPLAIN: <one sentence explaining why that answer is correct>\n\n"
+        f"Document excerpts:\n{context}\n\n"
+        "5 multiple-choice questions:"
+    )
+
+
+def _is_partial_answer(text: str) -> bool:
+    hedges = [
+        "i'm not sure", "i am not sure", "it's unclear", "it is unclear",
+        "not explicitly", "not directly", "may be", "might be", "could be",
+        "seems to", "appears to", "possibly", "perhaps", "not mentioned",
+        "not specified", "cannot determine", "can't determine",
+    ]
+    low = text.lower()
+    if len(text.split()) < 8:
+        return True
+    return any(h in low for h in hedges)
 
 
 def build_summary_prompt(context: str, topic: str) -> str:
@@ -189,6 +265,44 @@ def build_summary_prompt(context: str, topic: str) -> str:
     )
 
 
+def _parse_flashcards(raw: str) -> list:
+    cards = []
+    blocks = re.split(r'\n(?=TERM:)', raw.strip())
+    for block in blocks:
+        term = def_ = ""
+        for line in block.strip().splitlines():
+            line = line.strip()
+            if line.upper().startswith("TERM:"):
+                term = line[5:].strip()
+            elif line.upper().startswith("DEF:"):
+                def_ = line[4:].strip()
+        if term and def_:
+            cards.append({"term": term, "definition": def_})
+    return cards[:8]
+
+
+def _parse_quiz(raw: str) -> list:
+    questions = []
+    blocks = re.split(r'\n(?=Q:)', raw.strip())
+    for block in blocks:
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        q_text = explanation = ""
+        options = {}
+        answer = ""
+        for line in lines:
+            if line.startswith("Q:"):
+                q_text = line[2:].strip()
+            elif line.startswith(("A)", "B)", "C)", "D)")):
+                options[line[0]] = line[3:].strip()
+            elif line.upper().startswith("ANSWER:"):
+                answer = line.split(":", 1)[-1].strip().upper()
+            elif line.upper().startswith("EXPLAIN:"):
+                explanation = line.split(":", 1)[-1].strip()
+        if q_text and len(options) == 4 and answer in options:
+            questions.append({"question": q_text, "options": options, "answer": answer, "explanation": explanation})
+    return questions[:5]
+
+
 # ── Main engine class ──────────────────────────────────────────────────────────
 
 class ChapterEngine:
@@ -198,6 +312,7 @@ class ChapterEngine:
         self.chunks     : list[dict]       = []
         self.embeddings : np.ndarray | None = None
         self.bm25       : BM25Okapi | None  = None
+        self._cache     : dict             = {}
         self._build(pdf_bytes)
 
     # ── Build ──────────────────────────────────────────────────────────────────
@@ -228,40 +343,58 @@ class ChapterEngine:
         return pages
 
     def _split(self, text: str, page_num: int) -> list:
+        sentences = nltk.sent_tokenize(text)
         chunks = []
-        for i in range(0, len(nltk.sent_tokenize(text)), CHUNK_SENTENCES):
-            chunk = " ".join(nltk.sent_tokenize(text)[i: i + CHUNK_SENTENCES]).strip()
+        for i in range(0, len(sentences), CHUNK_SENTENCES):
+            chunk = " ".join(sentences[i: i + CHUNK_SENTENCES]).strip()
             if len(chunk) >= 30:
                 chunks.append({"text": chunk, "page": page_num})
         return chunks
 
+    # ── Shared context builder ─────────────────────────────────────────────────
+
+    def _build_context(self, query: str) -> tuple:
+        """Return (context_string, source_pages) for the given query."""
+        if fits_whole_document(self.chunks):
+            ordered = sorted(self.chunks, key=lambda c: c["page"])
+        else:
+            top_chunks = self._hybrid_retrieve(query, top_k=RETRIEVAL_TOP_K)
+            ordered = sorted(top_chunks, key=lambda c: c["page"])
+        context = "\n\n".join(f"[Page {c['page']}] {c['text']}" for c in ordered)
+        source_pages = sorted({c["page"] for c in ordered})
+        return context, source_pages
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def ask(self, question: str) -> dict:
+    def ask(self, question: str, history: list = None, length: str = "normal") -> dict:
         q = correct_spelling(question.strip())
 
-        if fits_whole_document(self.chunks):
-            # Small/medium doc: hand over everything in page order
-            ordered = sorted(self.chunks, key=lambda c: c["page"])
-            context = "\n\n".join(f"[Page {c['page']}] {c['text']}" for c in ordered)
-            source_pages = sorted({c["page"] for c in ordered})
-        else:
-            # Large doc: retrieve top-18 chunks then let LLM read them
-            top_chunks = self._hybrid_retrieve(q, top_k=RETRIEVAL_TOP_K)
-            ordered = sorted(top_chunks, key=lambda c: c["page"])
-            context = "\n\n".join(f"[Page {c['page']}] {c['text']}" for c in ordered)
-            source_pages = sorted({c["page"] for c in ordered})
+        # Cache key: question + length (history intentionally excluded — context-sensitive)
+        cache_key = hashlib.sha256(f"{q}|{length}".encode()).hexdigest()
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        prompt = build_prompt(context, q)
-        response = _llm().create_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.1,
-        )
+        context, source_pages = self._build_context(q)
+
+        system_msg = {"role": "user", "content": build_prompt(context, q, length)}
+        messages = [system_msg]
+        if history:
+            for turn in history[-6:]:
+                role = "user" if turn.get("role") == "user" else "assistant"
+                messages.append({"role": role, "content": str(turn.get("content", ""))})
+            messages.append({"role": "user", "content": q})
+
+        max_tokens = {"short": 120, "normal": 300, "detailed": 500}.get(length, 300)
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.1,
+            )
         answer_text = response["choices"][0]["message"]["content"].strip()
 
         if answer_text.upper().startswith("NOT_FOUND") or answer_text.upper() == "NOT_FOUND":
-            return {
+            result = {
                 "answer": (
                     "I couldn't find anything about that in this chapter. "
                     "Try rephrasing, or check if it's covered in a different chapter."
@@ -269,42 +402,47 @@ class ChapterEngine:
                 "matches": [],
                 "mode": "no_match",
             }
+            self._cache[cache_key] = result
+            return result
 
-        # Build match objects: use first 3 source pages
+        # Real relevance: use the hybrid score of the top matching chunk for each page
+        q_emb = _embed([q])[0]
+        sem_scores = self.embeddings.dot(q_emb).flatten()
+        tokens = _bm25_tokens(q)
+        bm25_raw = np.array(self.bm25.get_scores(tokens), dtype=np.float32) if tokens else np.zeros(len(self.chunks))
+        bm25_max = bm25_raw.max()
+        bm25_norm = bm25_raw / bm25_max if bm25_max > 0 else bm25_raw
+        combined = (sem_scores + 0.15 * bm25_norm)
+
         matches = []
         for pg in source_pages[:3]:
-            chunk = next((c for c in self.chunks if c["page"] == pg), None)
-            if chunk:
-                matches.append({
-                    "page": pg,
-                    "relevance": 1.0,
-                    "snippet": chunk["text"][:200],
-                })
+            idxs = [i for i, c in enumerate(self.chunks) if c["page"] == pg]
+            if not idxs:
+                continue
+            best_idx = max(idxs, key=lambda i: combined[i])
+            relevance = float(np.clip(combined[best_idx], 0.0, 1.0))
+            matches.append({
+                "page": pg,
+                "relevance": round(relevance, 3),
+                "snippet": self.chunks[best_idx]["text"][:200],
+            })
 
-        return {
-            "answer": answer_text,
-            "matches": matches,
-            "mode": "answer",
-        }
+        mode = "partial" if _is_partial_answer(answer_text) else "answer"
+        result = {"answer": answer_text, "matches": matches, "mode": mode}
+        self._cache[cache_key] = result
+        return result
 
     def summarize(self, topic: str) -> dict:
         topic = correct_spelling(topic.strip())
-        if fits_whole_document(self.chunks):
-            ordered = sorted(self.chunks, key=lambda c: c["page"])
-            context = "\n\n".join(f"[Page {c['page']}] {c['text']}" for c in ordered)
-            source_pages = sorted({c["page"] for c in ordered})
-        else:
-            top_chunks = self._hybrid_retrieve(topic, top_k=RETRIEVAL_TOP_K)
-            ordered = sorted(top_chunks, key=lambda c: c["page"])
-            context = "\n\n".join(f"[Page {c['page']}] {c['text']}" for c in ordered)
-            source_pages = sorted({c["page"] for c in ordered})
+        context, source_pages = self._build_context(topic)
 
         prompt = build_summary_prompt(context, topic)
-        response = _llm().create_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.1,
-        )
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.1,
+            )
         answer_text = response["choices"][0]["message"]["content"].strip()
 
         if answer_text.startswith("NOT_FOUND"):
@@ -314,6 +452,57 @@ class ChapterEngine:
             "summary": answer_text,
             "sources": [{"page": p} for p in source_pages[:5]],
         }
+
+    def generate_quiz(self) -> list:
+        context, _ = self._build_context("key concepts important facts definitions")
+        prompt = build_quiz_prompt(context)
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.3,
+            )
+        raw = response["choices"][0]["message"]["content"].strip()
+        return _parse_quiz(raw)
+
+    def explain_simply(self, question: str) -> dict:
+        q = correct_spelling(question.strip())
+        context, source_pages = self._build_context(q)
+        prompt = build_eli12_prompt(context, q)
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=250,
+                temperature=0.2,
+            )
+        answer_text = response["choices"][0]["message"]["content"].strip()
+        if answer_text.upper().startswith("NOT_FOUND"):
+            return {"answer": "This topic doesn't seem to be in this chapter.", "mode": "no_match"}
+        return {"answer": answer_text, "mode": "answer"}
+
+    def get_followups(self, answer: str) -> list:
+        prompt = build_followup_prompt(answer)
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=80,
+                temperature=0.4,
+            )
+        raw = response["choices"][0]["message"]["content"].strip()
+        lines = [l.strip().lstrip("-•123456789.) ") for l in raw.splitlines() if l.strip()]
+        return [l for l in lines if len(l) > 5][:2]
+
+    def generate_flashcards(self) -> list:
+        context, _ = self._build_context("key terms definitions concepts vocabulary")
+        prompt = build_flashcard_prompt(context)
+        with _LLM_LOCK:
+            response = _llm().create_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=600,
+                temperature=0.2,
+            )
+        raw = response["choices"][0]["message"]["content"].strip()
+        return _parse_flashcards(raw)
 
     def top_keywords(self, n: int = 5) -> list:
         ranked = sorted(

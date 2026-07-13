@@ -348,3 +348,32 @@ body {
   box-shadow: 0 0 12px rgba(30,111,85,0.3);
 }
 .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Copy button on bot bubbles ──────────────────────────────────── */
+.bubble-copyable:hover .copy-btn { opacity: 1 !important; }
+
+/* ── Markdown inside bot bubbles ─────────────────────────────────── */
+.md-bubble p  { margin: 0 0 0.5em; }
+.md-bubble p:last-child { margin-bottom: 0; }
+.md-bubble ul, .md-bubble ol { margin: 0.4em 0 0.5em 1.2em; padding: 0; }
+.md-bubble li { margin-bottom: 0.25em; }
+.md-bubble strong { color: rgba(255,255,255,0.95); font-weight: 600; }
+.md-bubble em    { color: rgba(255,255,255,0.75); }
+.md-bubble code  { font-family: 'IBM Plex Mono', monospace; font-size: 0.82em; background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 5px; }
+
+/* ── Flashcard 3D flip ───────────────────────────────────────────── */
+[style*="preserve-3d"] * { -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+
+/* ── Mobile layout ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  #app-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  #app-shelf {
+    border-right: none;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    overflow-y: visible;
+    max-height: 60vh;
+  }
+}

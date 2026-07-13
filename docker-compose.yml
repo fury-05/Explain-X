@@ -1,3 +1,5 @@
+env_file: .env
+
 services:
   backend:
     build: ./backend
@@ -7,9 +9,27 @@ services:
       - FLASK_ENV=production
       - MAX_UPLOAD_MB=20
       - SESSION_TTL_MINUTES=120
-      - APP_PASSWORD=explainx2024
+      - APP_PASSWORD=${APP_PASSWORD:-explainx2024}
+      - TEACHER_KEY=${TEACHER_KEY:-teacher2024}
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - APP_SCHOOL=${APP_SCHOOL:-Good Samaritan School}
+      - APP_STUDENTS=${APP_STUDENTS:-Sahil,Yahya,Abdan,Sarim}
     expose:
       - "5000"
+    volumes:
+      - model-cache:/app/models
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 90s
 
   frontend:
     build: ./frontend
@@ -18,4 +38,13 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+
+volumes:
+  model-cache:
